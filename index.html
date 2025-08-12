@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="is">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Prufuupphleðsla kauptilboðs – með OCR</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- PDF.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.worker.min.js"></script>
+  <!-- Tesseract.js (OCR) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    body { background: #0b1220; color: #E5E7EB; }
+    .card { background: #111827; border-radius: 1rem; box-shadow: 0 10px 25px rgba(0,0,0,0.35); }
+    .badge { font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 0.5rem; }
+    .ok { background: #065f46; }
+    .warn { background: #92400e; }
+    .err { background: #7f1d1d; }
+    .muted { color: #9CA3AF; }
+    textarea, input, select { background:#0f172a; border:1px solid #334155; border-radius:0.5rem; padding:0.5rem; color:#E5E7EB; width:100%; }
+    label { font-size:0.85rem; color:#9CA3AF; }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+    .code { font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background:#0a0f1d; border:1px solid #1f2937; border-radius:0.5rem; padding:0.75rem; white-space:pre-wrap;}
+    progress { width: 100%; height: 10px; }
+    .hint { font-size: 0.8rem; color:#93C5FD; }
+  </style>
+</head>
+<body class="p-4 md:p-8">
+  <div class="max-w-6xl mx-auto space-y-6">
+    <header class="flex items-center justify-between">
+      <h1 class="text-xl md:text-2xl font-bold text-white">Prufuupphleðsla kauptilboðs (PDF → texti, með OCR ef þarf)</h1>
+      <div class="text-sm muted">Textalag → OCR fallback • Allt keyrir staðbundið í vafranum</div>
+    </header>
+
+    <section class="card p-4 md:p-6">
+      <div class="grid md:grid-cols-2 gap-4 items-start">
+        <div>
+          <label class="block mb-2">Hlaða upp kauptilboði (PDF)</label>
+          <input id="file" type="file" accept="application/pdf" />
+          <p class="muted mt-2 text-sm">Ef PDF er skannað (mynd), notar kerfið sjálfkrafa OCR (Tesseract.js).</p>
+          <div id="ocrState" class="mt-3 hidden">
+            <div class="hint mb-1">OCR í gangi – þetta getur tekið nokkrar sekúndur eftir síðum.</div>
+            <progress id="ocrProgress" value="0" max="100"></progress>
+            <div id="ocrMsg" class="muted text-xs mt-1"></div>
+          </div>
+        </div>
+        <div>
+          <div class="text-sm hint mb-2">Hraðsamantekt</div>
+          <div id="summary" class="code text-sm">Engin gögn enn. Hladdu upp PDF eða límdu texta hér að neðan.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card p-4 md:p-6">
+      <div class="text-sm hint mb-2">Unninn texti (úr PDF eða handvirkt límt)</div>
+      <textarea id="raw" rows="10" placeholder="Texti úr kauptilboði..."></textarea>
+      <div class="mt-3 flex gap-2">
+        <button id="parseBtn" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500">Greina texta</button>
+        <button id="clearBtn" class="px-4 py-2 rounded-xl bg-gray-700 hover:bg-gray-600">Hreinsa</button>
+      </div>
+    </section>
+
+    <section class="card p-4 md:p-6">
+      <div class="text-sm hint mb-2">Greindir reitir (má breyta handvirkt)</div>
+      <div class="grid-2">
+        <div>
+          <label>Seljandi – nafn</label>
+          <input id="sellerName" placeholder="Nafn seljanda"/>
+        </div>
+        <div>
+          <label>Seljandi – kennitala</label>
+          <input id="sellerSSN" placeholder="000000-0000"/>
+        </div>
+        <div>
+          <label>Kaupandi – nafn</label>
+          <input id="buyerName" placeholder="Nafn kaupanda"/>
+        </div>
+        <div>
+          <label>Kaupandi – kennitala</label>
+          <input id="buyerSSN" placeholder="000000-0000"/>
+        </div>
+        <div>
+          <label>Eign – heimilisfang</label>
+          <input id="propertyAddress" placeholder="Dæmi 1, 101 Reykjavík"/>
+        </div>
+        <div>
+          <label>Fasteignanúmer / landnúmer</label>
+          <input id="propertyId" placeholder="F-nr / landnúmer"/>
+        </div>
+        <div>
+          <label>Kaupverð (ISK)</label>
+          <input id="price" placeholder="t.d. 65.000.000"/>
+        </div>
+        <div>
+          <label>Trygging / útborgun (ISK)</label>
+          <input id="deposit" placeholder="t.d. 3.250.000"/>
+        </div>
+        <div>
+          <label>Afhendingardagur</label>
+          <input id="handover" placeholder="YYYY-MM-DD"/>
+        </div>
+        <div>
+          <label>Fyrirvarar / sérákvæði</label>
+          <input id="conditions" placeholder="t.d. fjármögnun, skilyrt veðleyfi, skoðun..."/>
+        </div>
+      </div>
+      <div class="mt-3 flex flex-wrap gap-3">
+        <label class="badge warn"><input id="hasLoan" type="checkbox" class="mr-2"> Eign með láni</label>
+        <label class="badge warn"><input id="hasChain" type="checkbox" class="mr-2"> 2+ eignir í keðju</label>
+        <label class="badge warn"><input id="hasLandLease" type="checkbox" class="mr-2"> Lóðarleiga</label>
+      </div>
+    </section>
+
+    <section class="card p-4 md:p-6">
+      <div class="text-sm hint mb-2">Gátlisti – hvað vantar?</div>
+      <div id="checklist" class="space-y-2 text-sm"></div>
+      <div class="mt-3">
+        <button id="refreshChecklist" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500">Endurreikna gátlista</button>
+      </div>
+    </section>
+
+    <section class="card p-4 md:p-6">
+      <div class="text-sm hint mb-2">JSON‑útflutningur (til notkunar í API/kerfi)</div>
+      <div class="grid-2">
+        <textarea id="jsonOut" rows="12" class="code"></textarea>
+        <div>
+          <div class="muted mb-2">Afrita niðurstöður yfir í næsta skref (t.d. skjalavél)</div>
+          <button id="copyJson" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500">Afrita JSON</button>
+        </div>
+      </div>
+    </section>
+
+    <footer class="text-xs muted text-center py-6">© Prufa – Skjalavinnslukerfi fasteignasala (demo). Engin gögn send út.</footer>
+  </div>
+
+<script>
+function setValue(id, v) { document.getElementById(id).value = v || ""; }
+function getValue(id) { return (document.getElementById(id).value || "").trim(); }
+
+function refreshSummary(parsed) {
+  const s = document.getElementById('summary');
+  s.textContent = [
+    parsed.sellerName ? `Seljandi: ${parsed.sellerName}` : "Seljandi: ?",
+    parsed.buyerName  ? `Kaupandi: ${parsed.buyerName}`  : "Kaupandi: ?",
+    parsed.address    ? `Eign: ${parsed.address}` : "Eign: ?",
+    parsed.price      ? `Kaupverð: ${parsed.price}` : "Kaupverð: ?",
+  ].join("\n");
+}
+
+function checklist() {
+  const items = [];
+  if (!getValue('sellerName') || !getValue('sellerSSN')) items.push({t:"Vantar fullar upplýsingar um seljanda (nafn/kt.)", s:"err"});
+  if (!getValue('buyerName') || !getValue('buyerSSN'))   items.push({t:"Vantar fullar upplýsingar um kaupanda (nafn/kt.)", s:"err"});
+  if (!getValue('propertyAddress')) items.push({t:"Vantar heimilisfang eignar", s:"err"});
+  if (!getValue('price')) items.push({t:"Vantar kaupverð", s:"err"});
+  if (!getValue('handover')) items.push({t:"Vantar afhendingardag", s:"warn"});
+
+  const hasLoan = document.getElementById('hasLoan').checked;
+  const hasChain = document.getElementById('hasChain').checked;
+  const hasLandLease = document.getElementById('hasLandLease').checked;
+
+  if (hasLoan)      items.push({t:"Lán á eign: biðja um lánayfirlit, veðbókarvottorð og uppgreiðsluáætlun", s:"warn"});
+  if (hasChain)     items.push({t:"Tvær eða fleiri eignir: velja veðflutning eða uppgreiðslu á hverri eign", s:"warn"});
+  if (hasLandLease) items.push({t:"Lóðarleiga: hlaða inn lóðarleigusamningi og skuldleysisstaðfestingu leigusala", s:"warn"});
+
+  const cond = getValue('conditions').toLowerCase();
+  if (cond.includes('veð') || cond.includes('ved')) items.push({t:"Skilyrt veðleyfi nefnt: stofna veðleyfis-/veðflutningsbeiðni og stöðva útgreiðslur þar til samþykkt liggur fyrir", s:"warn"});
+  if (cond.includes('fjármögn') || cond.includes('fjarmogn')) items.push({t:"Fjármögnunar-fyrirvari: merkja sem skilyrði og fylgja gildistíma", s:"warn"});
+  if (cond.includes('skoðun')) items.push({t:"Skoðunarfyrirvari: skrá frest og verklag við úrbætur/niðurlagningu", s:"ok"});
+
+  const el = document.getElementById('checklist');
+  el.innerHTML = "";
+  if (items.length === 0) {
+    el.innerHTML = '<div class="badge ok inline-block">[OK] Engar athugasemdir</div>';
+  } else {
+    items.forEach(it => {
+      const div = document.createElement('div');
+      div.className = `badge inline-block ${it.s}`;
+      div.textContent = it.t;
+      el.appendChild(div);
+    });
+  }
+
+  const json = {
+    parties: {
+      seller: { name: getValue('sellerName'), ssn: getValue('sellerSSN') },
+      buyer:  { name: getValue('buyerName'),  ssn: getValue('buyerSSN') }
+    },
+    property: { address: getValue('propertyAddress'), id: getValue('propertyId') },
+    price: { total: getValue('price'), deposit: getValue('deposit') },
+    dates: { handover: getValue('handover') },
+    flags: { hasLoan, hasChain, hasLandLease },
+    conditions: getValue('conditions'),
+    checklist: items.map(i => i.t)
+  };
+  document.getElementById('jsonOut').value = JSON.stringify(json, null, 2);
+}
+
+function parseFields(text) {
+  const clean = text.replace(/\s+/g, " ").trim();
+  function grab(regex) { const m = clean.match(regex); return m ? (m[1] || m[0]) : ""; }
+
+  const sellerName = grab(/Seljandi\s*[:\-]\s*([^,\n]+?)(?:\s+kt\.?|\s+kennitala|,|\.)/i);
+  const sellerSSN  = grab(/Seljandi[^\d]*(\d{6}[\- ]?\d{4})/i);
+  const buyerName  = grab(/Kaupandi\s*[:\-]\s*([^,\n]+?)(?:\s+kt\.?|\s+kennitala|,|\.)/i);
+  const buyerSSN   = grab(/Kaupandi[^\d]*(\d{6}[\- ]?\d{4})/i);
+  const address    = grab(/Eign\s*[:\-]\s*([^\n,]+?)(?:\s+fasteignanr\.|\s+fasteignanúmer|,|\.)/i) || grab(/Heimilisfang\s*[:\-]\s*([^\n,]+)/i);
+  const propId     = grab(/fasteigna(nr\.|númer)\s*[:\-]\s*([\w\-\/]+)/i);
+  const price      = grab(/Kaupver(?:d|ð)\s*[:\-]\s*([\d\. ]+)/i);
+  const deposit    = grab(/Trygging(?:\s*\/\s*utborgun)?\s*[:\-]\s*([\d\. ]+)/i);
+  const handover   = grab(/Afhending(?:ardagur)?\s*[:\-]\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|\d{1,2}\.\d{1,2}\.\d{2,4})/i);
+  const conditions = grab(/Fyrirvarar?\s*[:\-]\s*([^\n]+)/i) || grab(/Serakv(?:ae|æð)i\s*[:\-]\s*([^\n]+)/i);
+  return { sellerName, sellerSSN, buyerName, buyerSSN, address, propId, price, deposit, handover, conditions, raw: clean };
+}
+
+// ---- PDF text extraction (text layer) ----
+async function extractTextFromPDF_TextLayer(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+  let fullText = "";
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const strings = content.items.map(item => item.str);
+    fullText += strings.join(" ") + "\n";
+  }
+  return fullText.trim();
+}
+
+// ---- OCR fallback using canvas rendering ----
+async function extractTextFromPDF_OCR(file, progressCb) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+
+  let ocrText = "";
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({scale: 2});
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({canvasContext: ctx, viewport}).promise;
+
+    const dataURL = canvas.toDataURL('image/png');
+    const worker = await Tesseract.createWorker("eng+isl", 1);
+    const { data } = await worker.recognize(dataURL);
+    ocrText += data.text + "\n";
+    await worker.terminate();
+
+    if (progressCb) progressCb(i, pdf.numPages);
+  }
+  return ocrText.trim();
+}
+
+async function extractSmart(file) {
+  let text = "";
+  try { text = await extractTextFromPDF_TextLayer(file); } catch(e) {}
+
+  if (text && text.split(/\s+/).length > 15) {
+    return { text, method: "text-layer" };
+  }
+
+  const ocrBox = document.getElementById('ocrState');
+  const ocrBar = document.getElementById('ocrProgress');
+  const ocrMsg = document.getElementById('ocrMsg');
+  ocrBox.classList.remove('hidden');
+  ocrBar.value = 0;
+  ocrMsg.textContent = "Byrja OCR...";
+
+  const textOCR = await extractTextFromPDF_OCR(file, (i, n) => {
+    ocrBar.value = Math.floor((i/n)*100);
+    ocrMsg.textContent = `OCR síða ${i}/${n}`;
+  });
+
+  ocrBar.value = 100;
+  ocrMsg.textContent = "OCR lokið";
+  return { text: textOCR, method: "ocr" };
+}
+
+// ---- Events ----
+document.getElementById('file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const { text, method } = await extractSmart(file);
+    document.getElementById('raw').value = text || "";
+    const parsed = parseFields(text || "");
+    setValue('sellerName', parsed.sellerName);
+    setValue('sellerSSN', parsed.sellerSSN);
+    setValue('buyerName', parsed.buyerName);
+    setValue('buyerSSN', parsed.buyerSSN);
+    setValue('propertyAddress', parsed.address);
+    setValue('propertyId', parsed.propId);
+    setValue('price', parsed.price);
+    setValue('deposit', parsed.deposit);
+    setValue('handover', parsed.handover);
+    setValue('conditions', parsed.conditions);
+    refreshSummary(parsed);
+    checklist();
+
+    const sum = document.getElementById('summary');
+    sum.textContent += "\n\n[Aðferð] " + (method === "ocr" ? "OCR (Tesseract.js)" : "Textalag (PDF.js)");
+  } catch (err) {
+    document.getElementById('summary').textContent = "Gat ekki lesið PDF: " + err.message;
+  } finally {
+    document.getElementById('ocrState').classList.add('hidden');
+  }
+});
+
+document.getElementById('parseBtn').addEventListener('click', () => {
+  const text = document.getElementById('raw').value || "";
+  const parsed = parseFields(text);
+  setValue('sellerName', parsed.sellerName);
+  setValue('sellerSSN', parsed.sellerSSN);
+  setValue('buyerName', parsed.buyerName);
+  setValue('buyerSSN', parsed.buyerSSN);
+  setValue('propertyAddress', parsed.address);
+  setValue('propertyId', parsed.propId);
+  setValue('price', parsed.price);
+  setValue('deposit', parsed.deposit);
+  setValue('handover', parsed.handover);
+  setValue('conditions', parsed.conditions);
+  refreshSummary(parsed);
+  checklist();
+});
+
+document.getElementById('clearBtn').addEventListener('click', () => {
+  document.getElementById('raw').value = "";
+  ['sellerName','sellerSSN','buyerName','buyerSSN','propertyAddress','propertyId','price','deposit','handover','conditions'].forEach(id => setValue(id, ""));
+  document.getElementById('summary').textContent = "Hladdu upp PDF eða límdu texta hér að neðan.";
+  document.getElementById('checklist').innerHTML = "";
+  document.getElementById('jsonOut').value = "";
+});
+
+document.getElementById('refreshChecklist').addEventListener('click', checklist);
+document.getElementById('hasLoan').addEventListener('change', checklist);
+document.getElementById('hasChain').addEventListener('change', checklist);
+document.getElementById('hasLandLease').addEventListener('change', checklist);
+document.querySelectorAll('input, textarea').forEach(el => {
+  el.addEventListener('input', () => { checklist(); });
+});
+
+document.getElementById('copyJson').addEventListener('click', async () => {
+  const txt = document.getElementById('jsonOut').value;
+  try { await navigator.clipboard.writeText(txt); alert("JSON afritað!"); }
+  catch { alert("Gat ekki afritað – veldu textann og afritaðu handvirkt."); }
+});
+</script>
+</body>
+</html>
